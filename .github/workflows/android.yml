@@ -88,7 +88,7 @@ jobs:
                   applicationId '__APP_ID__'
                   minSdk 24
                   targetSdk 35
-                  versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+              versionCode Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
                   versionName '__VERSION_NAME__'
               }
 
