@@ -400,7 +400,11 @@ button.mxn.done{background:#e0a800}button.mxn.cur{background:#d63a3a;animation:m
 .lite .mxscore,.lite .mxrec{-webkit-text-fill-color:currentColor;color:#b8860b;background:none;filter:none}
 .lite #fxm.on{animation:none}.lite .fxrays{display:none}.lite .fxp{box-shadow:none}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
-</style></head>
+</style><link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f7a6d">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
 <body>
 <div id="bg"></div>
 <header><span id="lv"></span><span id="bn"></span></header>
@@ -2561,6 +2565,11 @@ var FX=(function(){
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
   return{burst,burstEl,rain,chest,mascot,lite:()=>lite};
 })();
+</script>
+<script>
+if("serviceWorker" in navigator && (location.protocol==="https:"||location.hostname==="localhost") && location.hostname!=="appassets.androidplatform.net"){
+  addEventListener("load",function(){try{navigator.serviceWorker.register("sw.js").catch(function(){})}catch(e){}});
+}
 </script>
 </body>
 </html>

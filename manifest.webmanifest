@@ -1,0 +1,19 @@
+{
+  "name": "Kelime Bulmaca",
+  "short_name": "Kelime Bulmaca",
+  "description": "Harflerden kelime bulma oyunu: Türkçe, Azərbaycan dili, Русский.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1a22",
+  "theme_color": "#1f7a6d",
+  "lang": "tr",
+  "categories": ["games", "puzzle"],
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
