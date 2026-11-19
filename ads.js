@@ -7,7 +7,13 @@
 
   var earned = false, rcb = null, icb = null, wd = null, last = 0;
 
-  function msg() { try { say(T[LANG].ade); } catch (e) {} }
+  function msg() {
+    try {
+      var xb = document.querySelector(".adx.wait");
+      if (xb) { var t0 = xb.getAttribute("data-t"); xb.textContent = T[LANG].ade; setTimeout(function () { xb.textContent = t0; xb.classList.remove("wait"); xb.disabled = false; }, 2200); return; }
+      if (typeof mode !== "undefined" && mode === "w") wsSay(T[LANG].ade); else say(T[LANG].ade);
+    } catch (e) {}
+  }
   function clearWd() { if (wd) { clearTimeout(wd); wd = null; } }
 
   /* Android'den gelen olaylar: kind = rewarded | inter */
@@ -58,5 +64,30 @@
       if (typeof mode !== "undefined" && mode === "w") { return orig.call(self, ev); }
       maybeInter(function () { orig.call(self, ev); });
     };
+  }
+
+  /* Mini oyunlarin (60 Saniye, Hazine Avi, Buyuk Odul, Sans Carki) sonuc ekraninda
+     istege bagli "reklam izle, +20 jeton" dugmesi. Oyuncuya zorla reklam gosterilmez. */
+  var LBL = { tr: "🎬 Reklam izle  +20 🪙", az: "🎬 Reklama bax  +20 🪙", ru: "🎬 Смотреть рекламу  +20 🪙" };
+  var mxb = document.getElementById("mxbody");
+  if (mxb && window.MutationObserver) {
+    new MutationObserver(function () {
+      var e = mxb.querySelector(".mxend");
+      if (!e || e.__adx) return;
+      e.__adx = true;
+      var b = document.createElement("button");
+      b.className = "mxlink adx";
+      var lab = LBL[LANG] || LBL.tr;
+      b.textContent = lab; b.setAttribute("data-t", lab);
+      b.onclick = function () {
+        if (Ads.busy) return;
+        b.disabled = true; b.classList.add("wait");
+        Ads.rewarded(function () {
+          addCoins(20); try { mxCoins(); } catch (x) {}
+          b.classList.remove("wait"); b.textContent = "✅ +20 🪙";
+        });
+      };
+      e.appendChild(b);
+    }).observe(mxb, { childList: true, subtree: true });
   }
 })();
