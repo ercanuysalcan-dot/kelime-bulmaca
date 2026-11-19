@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["index.html", "icon.png", ".github/workflows/android.yml"]
+    paths: ["index.html", "ads.js", "icon.png", ".github/workflows/android.yml"]
 
 permissions:
   contents: write
@@ -19,6 +19,13 @@ env:
   APP_ID: com.kelimebulmaca.oyun
   APP_NAME: Kelime Bulmaca
   VERSION_NAME: "1.0"
+  # AdMob kimlikleri. Asagidakiler Google'in TEST kimlikleridir (reklam gorunur ama gelir YOKTUR).
+  # Yayindan once AdMob hesabindaki GERCEK kimliklerle degistir.
+  ADMOB_APP_ID: ca-app-pub-2054317697263259~7509236490
+  ADMOB_REWARDED: ca-app-pub-2054317697263259/8742427118
+  ADMOB_INTERSTITIAL: ca-app-pub-2054317697263259/4817117835
+  ADMOB_BANNER: ca-app-pub-2054317697263259/3290789880
+  ADMOB_BANNER_ON: "true"
 
 jobs:
   build:
@@ -48,6 +55,7 @@ jobs:
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do mkdir -p android/app/src/main/res/mipmap-$d; done
 
           cp index.html android/app/src/main/assets/index.html
+          [ -f ads.js ] && cp ads.js android/app/src/main/assets/ads.js || true
 
           cat > android/settings.gradle <<'EOF'
           pluginManagement {
@@ -88,7 +96,7 @@ jobs:
                   applicationId '__APP_ID__'
                   minSdk 24
                   targetSdk 35
-              versionCode Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+                  versionCode Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
                   versionName '__VERSION_NAME__'
               }
 
@@ -122,12 +130,16 @@ jobs:
 
           dependencies {
               implementation 'androidx.webkit:webkit:1.12.1'
+              implementation 'com.google.android.gms:play-services-ads:23.6.0'
+              implementation 'com.google.android.ump:user-messaging-platform:3.1.0'
           }
           EOF
 
           cat > android/app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <application
                   android:label="@string/app_name"
                   android:icon="@mipmap/ic_launcher"
@@ -135,6 +147,9 @@ jobs:
                   android:hardwareAccelerated="true"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme">
+                  <meta-data
+                      android:name="com.google.android.gms.ads.APPLICATION_ID"
+                      android:value="__ADMOB_APP_ID__" />
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -189,28 +204,69 @@ jobs:
           import android.graphics.Color;
           import android.net.Uri;
           import android.os.Bundle;
+          import android.view.Gravity;
           import android.view.View;
           import android.view.WindowInsets;
+          import android.webkit.JavascriptInterface;
           import android.webkit.WebResourceRequest;
           import android.webkit.WebResourceResponse;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
-          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
 
           import androidx.webkit.WebViewAssetLoader;
 
+          import com.google.android.gms.ads.AdError;
+          import com.google.android.gms.ads.AdRequest;
+          import com.google.android.gms.ads.AdSize;
+          import com.google.android.gms.ads.AdView;
+          import com.google.android.gms.ads.FullScreenContentCallback;
+          import com.google.android.gms.ads.LoadAdError;
+          import com.google.android.gms.ads.MobileAds;
+          import com.google.android.gms.ads.OnUserEarnedRewardListener;
+          import com.google.android.gms.ads.initialization.InitializationStatus;
+          import com.google.android.gms.ads.initialization.OnInitializationCompleteListener;
+          import com.google.android.gms.ads.interstitial.InterstitialAd;
+          import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
+          import com.google.android.gms.ads.rewarded.RewardItem;
+          import com.google.android.gms.ads.rewarded.RewardedAd;
+          import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
+          import com.google.android.ump.ConsentForm;
+          import com.google.android.ump.ConsentInformation;
+          import com.google.android.ump.ConsentRequestParameters;
+          import com.google.android.ump.FormError;
+          import com.google.android.ump.UserMessagingPlatform;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.InputStream;
+          import java.util.concurrent.atomic.AtomicBoolean;
+
           public class MainActivity extends Activity {
+              private static final String REWARDED_ID = "__ADMOB_REWARDED__";
+              private static final String INTERSTITIAL_ID = "__ADMOB_INTERSTITIAL__";
+              private static final String BANNER_ID = "__ADMOB_BANNER__";
+              private static final boolean BANNER_ON = __ADMOB_BANNER_ON__;
+
               private WebView web;
+              private LinearLayout root;
+              private AdView bannerView;
+              private RewardedAd rewardedAd;
+              private InterstitialAd interstitialAd;
+              private boolean rewardedLoading = false;
+              private boolean interstitialLoading = false;
+              private final AtomicBoolean adsStarted = new AtomicBoolean(false);
+              private ConsentInformation consent;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  FrameLayout root = new FrameLayout(this);
+                  root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
                   root.setBackgroundColor(Color.parseColor("#E6EDF1"));
                   web = new WebView(this);
-                  root.addView(web, new FrameLayout.LayoutParams(
-                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+                  root.addView(web, new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
                   setContentView(root);
 
                   root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
@@ -229,6 +285,8 @@ jobs:
                   s.setAllowFileAccess(false);
                   s.setAllowContentAccess(false);
 
+                  web.addJavascriptInterface(new AdBridge(), "AndroidAds");
+
                   final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                           .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                           .build();
@@ -246,9 +304,215 @@ jobs:
                           try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception e) { }
                           return true;
                       }
+
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
+                          if (url == null || !url.startsWith("https://appassets.androidplatform.net/")) return;
+                          try {
+                              InputStream in = getAssets().open("ads.js");
+                              ByteArrayOutputStream out = new ByteArrayOutputStream();
+                              byte[] buf = new byte[4096];
+                              int n;
+                              while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                              in.close();
+                              view.evaluateJavascript(out.toString("UTF-8"), null);
+                          } catch (Exception e) { }
+                      }
                   });
 
                   web.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+                  startConsent();
+              }
+
+              /* ---- Reklam onayi (UMP) ve baslatma ---- */
+
+              private void startConsent() {
+                  consent = UserMessagingPlatform.getConsentInformation(this);
+                  ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
+                  consent.requestConsentInfoUpdate(this, params,
+                          new ConsentInformation.OnConsentInfoUpdateSuccessListener() {
+                              @Override
+                              public void onConsentInfoUpdateSuccess() {
+                                  UserMessagingPlatform.loadAndShowConsentFormIfRequired(MainActivity.this,
+                                          new ConsentForm.OnConsentFormDismissedListener() {
+                                              @Override
+                                              public void onConsentFormDismissed(FormError formError) {
+                                                  startAdsIfAllowed();
+                                              }
+                                          });
+                              }
+                          },
+                          new ConsentInformation.OnConsentInfoUpdateFailureListener() {
+                              @Override
+                              public void onConsentInfoUpdateFailure(FormError formError) {
+                                  startAdsIfAllowed();
+                              }
+                          });
+                  startAdsIfAllowed();
+              }
+
+              private void startAdsIfAllowed() {
+                  if (consent == null || !consent.canRequestAds()) return;
+                  if (!adsStarted.compareAndSet(false, true)) return;
+                  runOnUiThread(new Runnable() {
+                      @Override
+                      public void run() {
+                          MobileAds.initialize(MainActivity.this, new OnInitializationCompleteListener() {
+                              @Override
+                              public void onInitializationComplete(InitializationStatus status) {
+                                  runOnUiThread(new Runnable() {
+                                      @Override
+                                      public void run() {
+                                          loadRewarded();
+                                          loadInterstitial();
+                                          addBanner();
+                                      }
+                                  });
+                              }
+                          });
+                      }
+                  });
+              }
+
+              private void loadRewarded() {
+                  if (rewardedAd != null || rewardedLoading) return;
+                  rewardedLoading = true;
+                  RewardedAd.load(this, REWARDED_ID, new AdRequest.Builder().build(), new RewardedAdLoadCallback() {
+                      @Override
+                      public void onAdLoaded(RewardedAd ad) {
+                          rewardedAd = ad;
+                          rewardedLoading = false;
+                      }
+
+                      @Override
+                      public void onAdFailedToLoad(LoadAdError error) {
+                          rewardedAd = null;
+                          rewardedLoading = false;
+                      }
+                  });
+              }
+
+              private void loadInterstitial() {
+                  if (interstitialAd != null || interstitialLoading) return;
+                  interstitialLoading = true;
+                  InterstitialAd.load(this, INTERSTITIAL_ID, new AdRequest.Builder().build(), new InterstitialAdLoadCallback() {
+                      @Override
+                      public void onAdLoaded(InterstitialAd ad) {
+                          interstitialAd = ad;
+                          interstitialLoading = false;
+                      }
+
+                      @Override
+                      public void onAdFailedToLoad(LoadAdError error) {
+                          interstitialAd = null;
+                          interstitialLoading = false;
+                      }
+                  });
+              }
+
+              private void addBanner() {
+                  if (!BANNER_ON || bannerView != null) return;
+                  bannerView = new AdView(this);
+                  bannerView.setAdUnitId(BANNER_ID);
+                  bannerView.setAdSize(AdSize.BANNER);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lp.gravity = Gravity.CENTER_HORIZONTAL;
+                  root.addView(bannerView, lp);
+                  bannerView.loadAd(new AdRequest.Builder().build());
+              }
+
+              /* ---- Oyundan gelen istekler ---- */
+
+              private void showRewarded() {
+                  final RewardedAd ad = rewardedAd;
+                  if (ad == null) {
+                      js("rewarded", "failed");
+                      loadRewarded();
+                      return;
+                  }
+                  rewardedAd = null;
+                  ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+                      @Override
+                      public void onAdShowedFullScreenContent() {
+                          js("rewarded", "shown");
+                      }
+
+                      @Override
+                      public void onAdDismissedFullScreenContent() {
+                          js("rewarded", "closed");
+                          loadRewarded();
+                      }
+
+                      @Override
+                      public void onAdFailedToShowFullScreenContent(AdError error) {
+                          js("rewarded", "failed");
+                          loadRewarded();
+                      }
+                  });
+                  ad.show(this, new OnUserEarnedRewardListener() {
+                      @Override
+                      public void onUserEarnedReward(RewardItem item) {
+                          js("rewarded", "earned");
+                      }
+                  });
+              }
+
+              private void showInterstitial() {
+                  final InterstitialAd ad = interstitialAd;
+                  if (ad == null) {
+                      js("inter", "skipped");
+                      loadInterstitial();
+                      return;
+                  }
+                  interstitialAd = null;
+                  ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+                      @Override
+                      public void onAdShowedFullScreenContent() {
+                          js("inter", "shown");
+                      }
+
+                      @Override
+                      public void onAdDismissedFullScreenContent() {
+                          js("inter", "closed");
+                          loadInterstitial();
+                      }
+
+                      @Override
+                      public void onAdFailedToShowFullScreenContent(AdError error) {
+                          js("inter", "failed");
+                          loadInterstitial();
+                      }
+                  });
+                  ad.show(this);
+              }
+
+              private void js(final String kind, final String ev) {
+                  web.post(new Runnable() {
+                      @Override
+                      public void run() {
+                          web.evaluateJavascript(
+                                  "window.__adEvent&&window.__adEvent('" + kind + "','" + ev + "')", null);
+                      }
+                  });
+              }
+
+              private class AdBridge {
+                  @JavascriptInterface
+                  public void rewarded() {
+                      runOnUiThread(new Runnable() {
+                          @Override
+                          public void run() { showRewarded(); }
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void interstitial() {
+                      runOnUiThread(new Runnable() {
+                          @Override
+                          public void run() { showInterstitial(); }
+                      });
+                  }
               }
 
               @Override
@@ -258,15 +522,31 @@ jobs:
               }
 
               @Override
-              protected void onPause() { super.onPause(); web.onPause(); }
+              protected void onPause() {
+                  super.onPause();
+                  web.onPause();
+                  if (bannerView != null) bannerView.pause();
+              }
 
               @Override
-              protected void onResume() { super.onResume(); web.onResume(); }
+              protected void onResume() {
+                  super.onResume();
+                  web.onResume();
+                  if (bannerView != null) bannerView.resume();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (bannerView != null) bannerView.destroy();
+                  super.onDestroy();
+              }
           }
           EOF
 
           sed -i "s/__APP_ID__/$APP_ID/g; s/__APP_NAME__/$APP_NAME/g; s/__VERSION_NAME__/$VERSION_NAME/g" \
             android/app/build.gradle android/app/src/main/res/values/strings.xml "$PKGDIR/MainActivity.java"
+          sed -i "s|__ADMOB_APP_ID__|$ADMOB_APP_ID|g" android/app/src/main/AndroidManifest.xml
+          sed -i "s|__ADMOB_REWARDED__|$ADMOB_REWARDED|g; s|__ADMOB_INTERSTITIAL__|$ADMOB_INTERSTITIAL|g; s|__ADMOB_BANNER__|$ADMOB_BANNER|g; s|__ADMOB_BANNER_ON__|$ADMOB_BANNER_ON|g" "$PKGDIR/MainActivity.java"
 
           python3 -m pip install --quiet pillow
           python3 - <<'EOF'
@@ -296,6 +576,12 @@ jobs:
           if [ -n "$KS" ]; then
             echo "$KS" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: AdMob kontrolu
+        run: |
+          if echo "$ADMOB_APP_ID" | grep -q 3940256099942544; then
+            echo "::warning::AdMob TEST kimlikleri kullaniliyor: reklam gorunur ama gelir YOK. Yayindan once gercek kimlikleri yaz."
           fi
 
       - name: Derle
